@@ -30,8 +30,10 @@ b = A @ x_true + 0.02 * rng.standard_normal(m)
 lam = 0.1 * np.abs(A.T @ b).max()
 
 # --------------------------------------------------------------- reference --
-# High-accuracy optimum: FC-GCG runs to its exact KKT certificate.
-x_star, _ = fc_gcg(A, b, lam, n_iter=500, kkt_tol=1e-12)
+# Numerical reference: FC-GCG must satisfy its full scale-aware KKT check.
+x_star, tr_star = fc_gcg(A, b, lam, n_iter=500)
+if not tr_star.converged:
+    raise RuntimeError(f"reference FC-GCG failed: {tr_star.status}")
 J_star = objective(A, b, x_star, lam)
 tau = np.abs(x_star).sum()          # matched l1 budget for vanilla FW
 
@@ -90,8 +92,9 @@ fig.savefig("figures/sparsity.png")
 
 # ----------------------------------------------------------------- summary --
 print(f"lambda = {lam:.4f},  J* = {J_star:.8f},  ||x*||_0 = {(x_star!=0).sum()}")
-print(f"FC-GCG stopped after {len(tr_gcg.obj)} iterations "
-      f"(exact KKT certificate)")
+print(f"FC-GCG stopped after {tr_gcg.iterations} iterations "
+      f"({tr_gcg.status}; KKT {tr_gcg.kkt_residual:.3e} <= "
+      f"{tr_gcg.kkt_tolerance:.3e})")
 for name, tr in runs.items():
     print(f"{name:26s} final gap {gap(tr)[-1]:.2e}   "
           f"final nnz {tr.nnz[-1]:5d}   iters {len(tr.obj)}")

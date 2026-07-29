@@ -1,60 +1,80 @@
-"""run_one.py -- run one (n, method) timing and append to results.json.
-Usage: python3 run_one.py <n> <method>   method in {ref,gcg,fw,ista,fista}
-The 'ref' step computes and caches J*, tau, L for dimension n."""
+"""Run one canonical scaling task and cache it in results.json.
 
-import json, os, sys, time
-import numpy as np
-from algorithms import ista, fista, frank_wolfe, fc_gcg, objective
+Usage: python3 run_one.py <n> <method>
+       method in {ref,gcg,fw,ista,fista}
+"""
 
-M, K_TRUE, REL_TOL = 300, 15, 1e-8
-CAPS = {2000: 2000, 20000: 2000, 200000: 1200}
+import json
+from pathlib import Path
+import sys
 
-n = int(sys.argv[1]); method = sys.argv[2]
-cap = CAPS[n]
+from scaling_protocol import (
+    METHODS,
+    PROTOCOL_VERSION,
+    build_reference,
+    make_instance,
+    run_method,
+    task_definition,
+)
 
-def make_instance(n):
-    rng = np.random.default_rng(n)          # seed by n: same instance across calls
-    A = rng.standard_normal((M, n)) / np.sqrt(M)
-    x_true = np.zeros(n)
-    x_true[rng.choice(n, K_TRUE, replace=False)] = rng.standard_normal(K_TRUE) * 3
-    b = A @ x_true + 0.02 * rng.standard_normal(M)
-    lam = 0.1 * np.abs(A.T @ b).max()
-    return A, b, lam, rng
 
-res = json.load(open("results.json")) if os.path.exists("results.json") else {}
-key = str(n)
-res.setdefault(key, {})
+RESULTS_PATH = Path("results.json")
 
-A, b, lam, rng = make_instance(n)
 
-if method == "ref":
-    v = rng.standard_normal(n); v /= np.linalg.norm(v)
-    for _ in range(50):
-        v = A.T @ (A @ v); v /= np.linalg.norm(v)
-    L = float(v @ (A.T @ (A @ v)))
-    x_star, _ = fc_gcg(A, b, lam, n_iter=500, kkt_tol=1e-12)
-    res[key]["meta"] = {"J_star": objective(A, b, x_star, lam),
-                        "tau": float(np.abs(x_star).sum()), "L": L,
-                        "lam": float(lam)}
-else:
-    meta = res[key]["meta"]
-    J_target = meta["J_star"] + REL_TOL * max(1.0, abs(meta["J_star"]))
-    t0 = time.perf_counter()
-    if method == "gcg":
-        _, tr = fc_gcg(A, b, lam, n_iter=500)
-    elif method == "fw":
-        _, tr = frank_wolfe(A, b, meta["tau"], n_iter=cap, trace_every=10,
-                            lam_for_obj=lam)
-    elif method == "ista":
-        _, tr = ista(A, b, lam, n_iter=cap, trace_every=10, L=meta["L"])
-    elif method == "fista":
-        _, tr = fista(A, b, lam, n_iter=cap, trace_every=10, L=meta["L"])
-    obj = np.array(tr.obj)
-    hit = np.nonzero(obj <= J_target)[0]
-    if len(hit):
-        res[key][method] = {"t": tr.t[int(hit[0])], "reached": True}
+def resumable_task_definition(n, method):
+    """Public seam used by the protocol-equality regression test."""
+    return task_definition(n, method)
+
+
+def load_results(path=RESULTS_PATH):
+    if not path.exists():
+        return {}
+    with path.open(encoding="utf-8") as stream:
+        return json.load(stream)
+
+
+def save_results(results, path=RESULTS_PATH):
+    with path.open("w", encoding="utf-8") as stream:
+        json.dump(results, stream, indent=1)
+        stream.write("\n")
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else argv
+    if len(argv) != 2:
+        raise SystemExit("usage: python3 run_one.py <n> <method>")
+    n = int(argv[0])
+    method = argv[1]
+    resumable_task_definition(n, method)  # validate before allocating arrays
+
+    results = load_results()
+    key = str(n)
+    results.setdefault(key, {})
+    A, b, lam = make_instance(n)
+
+    if method == "ref":
+        # A new reference changes both the KKT certificate and the safe
+        # Lipschitz bound, so cached timings for this dimension are invalid.
+        results[key] = {"meta": build_reference(A, b, lam)}
+        output = results[key]["meta"]
     else:
-        res[key][method] = {"t": time.perf_counter() - t0, "reached": False}
+        if method not in METHODS:
+            raise ValueError(f"unsupported method: {method}")
+        if "meta" not in results[key]:
+            raise RuntimeError(f"run `python3 run_one.py {n} ref` first")
+        if results[key]["meta"].get("protocol_version") != PROTOCOL_VERSION:
+            raise RuntimeError(
+                f"cached metadata predates protocol version {PROTOCOL_VERSION}; "
+                f"rerun `python3 run_one.py {n} ref`"
+            )
+        results[key][method] = run_method(
+            method, A, b, lam, results[key]["meta"]
+        )
+        output = results[key][method]
 
-json.dump(res, open("results.json", "w"), indent=1)
-print(n, method, res[key].get(method, res[key].get("meta")))
+    save_results(results)
+    print(n, method, output)
+
+
+if __name__ == "__main__":
+    main()
