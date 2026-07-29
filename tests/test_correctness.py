@@ -14,9 +14,12 @@ from algorithms import (
 )
 from scaling_protocol import (
     METHODS,
+    PROBLEM_SIZES,
+    PROTOCOL_VERSION,
     make_instance,
     safe_lipschitz,
     solver_arguments,
+    validate_results,
 )
 
 
@@ -178,12 +181,35 @@ class ScalingProtocolTests(unittest.TestCase):
                 else:
                     self.assertEqual(batch_kwargs[key], resumable_kwargs[key])
 
-    def test_lipschitz_bound_is_not_below_spectral_norm(self):
-        rng = np.random.default_rng(3)
-        A = rng.standard_normal((25, 60))
-        exact = np.linalg.norm(A, 2) ** 2
+    def test_lipschitz_bound_is_at_least_spectral_norm_squared(self):
+        A = np.array([[1.0, 2.0], [3.0, 4.0]])
+        spectral_norm_squared = np.linalg.norm(A, 2) ** 2
         bound = safe_lipschitz(A)
-        self.assertGreaterEqual(bound, exact * (1.0 - 32 * np.finfo(float).eps))
+        self.assertGreaterEqual(bound, spectral_norm_squared)
+
+    def test_canonical_validation_rejects_legacy_results(self):
+        results = {}
+        for n in PROBLEM_SIZES:
+            row = {
+                "meta": {
+                    "J_star": 1.0,
+                    "tau": 1.0,
+                    "L": 1.0,
+                    "lam": 1.0,
+                }
+            }
+            row.update({
+                method: {"t": 1.0, "reached": True}
+                for method in METHODS
+            })
+            results[str(n)] = row
+
+        with self.assertRaisesRegex(ValueError, "protocol version None"):
+            validate_results(results)
+
+        for row in results.values():
+            row["meta"]["protocol_version"] = PROTOCOL_VERSION
+        self.assertIs(validate_results(results), results)
 
 
 if __name__ == "__main__":

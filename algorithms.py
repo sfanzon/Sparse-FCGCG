@@ -40,6 +40,8 @@ import numpy as np
 # ----------------------------------------------------------------- helpers --
 
 DEFAULT_KKT_RTOL = float(np.sqrt(np.finfo(float).eps))
+# Tighter tolerance for solutions used as numerical objective references.
+REFERENCE_KKT_RTOL = 1e-10
 
 
 def objective(A, b, x, lam):

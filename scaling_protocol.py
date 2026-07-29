@@ -7,6 +7,7 @@ import numpy as np
 
 from algorithms import (
     DEFAULT_KKT_RTOL,
+    REFERENCE_KKT_RTOL,
     fc_gcg,
     fista,
     frank_wolfe,
@@ -30,7 +31,6 @@ KKT_RTOL = DEFAULT_KKT_RTOL
 # The reference KKT residual is required to be 100 times smaller than the
 # reported relative objective-gap target. This keeps reference error from
 # deciding whether a method reaches REL_TOL.
-REFERENCE_KKT_RTOL = REL_TOL / 100.0
 
 
 @dataclass(frozen=True)
@@ -95,18 +95,17 @@ def make_instance(n):
 
 def safe_lipschitz(A):
     """
-    Compute ||A||_2^2 from the smaller symmetric Gram matrix.
+    Return a conservative upper bound for ||A||_2^2.
 
-    A and A.T have the same non-zero squared singular values as A @ A.T.
-    Unlike a fixed-count power iteration, eigvalsh does not systematically
-    underestimate the largest eigenvalue. nextafter rounds the returned value
-    upward by one representable float for use as an ISTA/FISTA step bound.
+    For G = A @ A.T, ||A||_2^2 = lambda_max(G). The spectral radius of
+    any matrix is at most each induced matrix norm, hence
+    lambda_max(G) <= ||G||_inf, the maximum absolute row sum.
     """
     gram = A @ A.T
-    largest = float(np.linalg.eigvalsh(gram)[-1])
-    if not np.isfinite(largest) or largest < 0:
+    bound = float(np.linalg.norm(gram, ord=np.inf))
+    if not np.isfinite(bound) or bound < 0:
         raise FloatingPointError("failed to compute a finite Lipschitz bound")
-    return float(np.nextafter(largest, np.inf))
+    return float(np.nextafter(bound, np.inf))
 
 
 def build_reference(A, b, lam):
@@ -209,7 +208,7 @@ def run_method(method, A, b, lam, meta):
 
 
 def validate_results(results):
-    """Validate the JSON structure consumed by the scaling plot."""
+    """Validate canonical results for the current scaling protocol."""
     if not isinstance(results, dict) or not results:
         raise ValueError("scaling results must be a non-empty object")
     for n in PROBLEM_SIZES:
@@ -219,12 +218,8 @@ def validate_results(results):
         meta = row.get("meta")
         if not isinstance(meta, dict):
             raise ValueError(f"missing reference metadata for n={n}")
-        # Legacy committed results are retained until the expensive benchmark
-        # is deliberately regenerated. They may still be plotted, but are
-        # never accepted as solver input by run_one.py. Any explicitly
-        # versioned result must match the current canonical protocol.
         version = meta.get("protocol_version")
-        if version is not None and version != PROTOCOL_VERSION:
+        if version != PROTOCOL_VERSION:
             raise ValueError(
                 f"results for n={n} use protocol version {version}, "
                 f"expected {PROTOCOL_VERSION}"

@@ -16,7 +16,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from algorithms import ista, fista, frank_wolfe, fc_gcg, objective
+from algorithms import (
+    REFERENCE_KKT_RTOL,
+    fc_gcg,
+    fista,
+    frank_wolfe,
+    ista,
+    objective,
+)
 
 rng = np.random.default_rng(0)
 
@@ -31,7 +38,13 @@ lam = 0.1 * np.abs(A.T @ b).max()
 
 # --------------------------------------------------------------- reference --
 # Numerical reference: FC-GCG must satisfy its full scale-aware KKT check.
-x_star, tr_star = fc_gcg(A, b, lam, n_iter=500)
+x_star, tr_star = fc_gcg(
+    A,
+    b,
+    lam,
+    n_iter=500,
+    rtol=REFERENCE_KKT_RTOL,
+)
 if not tr_star.converged:
     raise RuntimeError(f"reference FC-GCG failed: {tr_star.status}")
 J_star = objective(A, b, x_star, lam)
@@ -92,6 +105,8 @@ fig.savefig("figures/sparsity.png")
 
 # ----------------------------------------------------------------- summary --
 print(f"lambda = {lam:.4f},  J* = {J_star:.8f},  ||x*||_0 = {(x_star!=0).sum()}")
+print(f"Reference KKT {tr_star.kkt_residual:.3e} <= "
+      f"{tr_star.kkt_tolerance:.3e}")
 print(f"FC-GCG stopped after {tr_gcg.iterations} iterations "
       f"({tr_gcg.status}; KKT {tr_gcg.kkt_residual:.3e} <= "
       f"{tr_gcg.kkt_tolerance:.3e})")
